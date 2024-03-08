@@ -1,0 +1,6 @@
+[run]
+omit =
+    /usr/lib/python3/dist-packages/*
+    *main.py
+    tests/conftest.py
+    tests/__init__.py
