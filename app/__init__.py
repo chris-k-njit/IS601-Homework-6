@@ -1,85 +1,105 @@
-# """
-# Dynamically load and execute command plugins without a strict command interface.
-# """
-# import pkgutil
-# import importlib
-# from typing import Dict, Any, Callable
-# from app.commands import CommandHandler, Command
-
-# class App:
-#     """
-#     Core application class that handles command registration and execution.
-#     Dynamically loads command plugins and executes them based on user input.
-#     """
-#     def __init__(self):
-#         self.commands: Dict[str, Callable] = {}
-
-#     def load_plugins(self):
-#         """
-#         Dynamically load command plugins from the app/plugins directory.
-#         Assumes each plugin module defines an `execute` function.
-#         """
-#         plugins_package = 'app.plugins'
-#         discovered_plugins = pkgutil.iter_modules([plugins_package.replace('.', '/')])
-
-#         for _, plugin_name, _ in discovered_plugins:
-#             plugin_module = importlib.import_module(f'{plugins_package}.{plugin_name}')
-#             execute_function = getattr(plugin_module, 'execute', None)
-#             if callable(execute_function):
-#                 self.commands[plugin_name] = execute_function
-
-#     def execute_command(self, command_name: str, *args):
-#         """
-#         Execute a registered command by its name, passing any arguments.
-#         """
-#         command = self.commands.get(command_name)
-#         if command:
-#             command(*args)  # Directly invoke the execute function
-#         else:
-#             print(f"No such command: '{command_name}'")
-
-#     def run(self):
-#         """
-#         Main loop to run the application.
-#         """
-#         self.load_plugins()
-#         print("Welcome to the Chris' calculator application.")
-#         print("\tType a command to execute. Type 'exit' to quit.")
-
-#         while True:
-#             user_input = input(">>> ").strip()
-#             if user_input == "exit":
-#                 print("Exiting calculator application...")
-#                 raise SystemExit
-#             command_name, *args = user_input.split(maxsplit=1)
-#             args = args[0].split() if args else []
-#             self.execute_command(command_name, *args)
-
+import os
 import pkgutil
 import importlib
+import sys
 from app.commands import CommandHandler
 from app.commands import Command
+from dotenv import load_dotenv
+import logging
+import logging.config
 
 class App:
-    def __init__(self): # Constructor
+    def __init__(self):
+        os.makedirs('logs', exist_ok=True)
+        self.configure_logging()
+        load_dotenv()
+        self.settings = self.load_environment_variables()
+        self.settings.setdefault('ENVIRONMENT', 'PRODUCTION')
         self.command_handler = CommandHandler()
 
+    def configure_logging(self):
+        logging_conf_path = 'logging.conf'
+        if os.path.exists(logging_conf_path):
+            logging.config.fileConfig(logging_conf_path, disable_existing_loggers=False)
+        else:
+            logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.info("Logging configured.")
+
+    def load_environment_variables(self):
+        settings = {key: value for key, value in os.environ.items()}
+        logging.info("Environment variables loaded.")
+        return settings
+
+    def get_environment_variable(self, env_var: str = 'ENVIRONMENT'):
+        return self.settings.get(env_var, None)
+
     def load_plugins(self):
-        # Dynamically load all plugins in the plugins directory
         plugins_package = 'app.plugins'
-        for _, plugin_name, is_pkg in pkgutil.iter_modules([plugins_package.replace('.', '/')]):
-            if is_pkg:  # Ensure it's a package
-                plugin_module = importlib.import_module(f'{plugins_package}.{plugin_name}')
-                for item_name in dir(plugin_module):
-                    item = getattr(plugin_module, item_name)
-                    try:
-                        if issubclass(item, (Command)):  # Assuming a BaseCommand class exists
-                            self.command_handler.register_command(plugin_name, item())
-                    except TypeError:
-                        continue  # If item is not a class or unrelated class, just ignore
+        plugins_path = plugins_package.replace('.', '/')
+        if not os.path.exists(plugins_path):
+            logging.warning(f"Plugins directory '{plugins_path}' not found.")
+            return
+        for _, plugin_name, is_pkg in pkgutil.iter_modules([plugins_path]):
+            if is_pkg:
+                try:
+                    plugin_module = importlib.import_module(f'{plugins_package}.{plugin_name}')
+                    self.register_plugin_commands(plugin_module, plugin_name)
+                except ImportError as e:
+                    logging.error(f"Error importing plugin {plugin_name}: {e}")
+
+    def register_plugin_commands(self, plugin_module, plugin_name):
+        for item_name in dir(plugin_module):
+            item = getattr(plugin_module, item_name)
+            if isinstance(item, type) and issubclass(item, Command) and item is not Command:
+                # Command names are now explicitly set to the plugin's folder name
+                self.command_handler.register_command(plugin_name, item())
+                logging.info(f"Command '{plugin_name}' from plugin '{plugin_name}' registered.")
+
     def start(self):
-        # Register commands here
         self.load_plugins()
-        print("Type 'exit' to exit.")
-        while True:  #REPL Read, Evaluate, Print, Loop
-            self.command_handler.execute_command(input(">>> ").strip())
+        logging.info("Application started. Type 'exit' to exit.")
+        try:
+            while True:
+                cmd_input = input(">>> ").strip()
+                if cmd_input.lower() == 'exit':
+                    logging.info("Application exit.")
+                    sys.exit(0)  # Use sys.exit(0) for a clean exit, indicating success.
+                try:
+                    self.command_handler.execute_command(cmd_input)
+                except KeyError:  # Assuming execute_command raises KeyError for unknown commands
+                    logging.error(f"Unknown command entered: {cmd_input}")
+                    sys.exit(1)  # Use a non-zero exit code to indicate failure or incorrect command.
+        except KeyboardInterrupt:
+            logging.info("Calculator application has been interrupted and is now exiting gracefully.")
+            sys.exit(0)  # Assuming a KeyboardInterrupt should also result in a clean exit.
+        finally:
+            logging.info("Calculator application is now shutdown.")
+
+
+if __name__ == "__main__":
+    app = App()
+    app.start()
+
+# class App:
+#     def __init__(self): # Constructor
+#         self.command_handler = CommandHandler()
+
+#     def load_plugins(self):
+#         # Dynamically load all plugins in the plugins directory
+#         plugins_package = 'app.plugins'
+#         for _, plugin_name, is_pkg in pkgutil.iter_modules([plugins_package.replace('.', '/')]):
+#             if is_pkg:  # Ensure it's a package
+#                 plugin_module = importlib.import_module(f'{plugins_package}.{plugin_name}')
+#                 for item_name in dir(plugin_module):
+#                     item = getattr(plugin_module, item_name)
+#                     try:
+#                         if issubclass(item, (Command)):  # Assuming a BaseCommand class exists
+#                             self.command_handler.register_command(plugin_name, item())
+#                     except TypeError:
+#                         continue  # If item is not a class or unrelated class, just ignore
+#     def start(self):
+#         # Register commands here
+#         self.load_plugins()
+#         print("To exit the calculator application, type 'exit' to exit.")
+#         while True:  #REPL Read, Evaluate, Print, Loop
+#             self.command_handler.execute_command(input(">>> ").strip())
