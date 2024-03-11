@@ -76,9 +76,9 @@ class App:
             logging.info("Calculator application is now shutdown.")
 
 
-if __name__ == "__main__":
-    app = App()
-    app.start()
+# if __name__ == "__main__":
+#     app = App()
+#     app.start()
 
 # class App:
 #     def __init__(self): # Constructor
